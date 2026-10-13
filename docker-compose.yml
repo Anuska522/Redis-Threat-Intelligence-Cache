@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: threat_intel_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build: .
+    container_name: threat_intel_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Real-Time Threat Intelligence Cache and Malicious URL/IP Detection System Using Redis
+      - APP_ENV=production
+      - HOST=0.0.0.0
+      - PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_TIMEOUT_SECONDS=2.0
+      - CTI_PROVIDER=demo
+      - VIRUSTOTAL_API_KEY=
+      - TTL_MALICIOUS_SECONDS=7200
+      - TTL_BENIGN_SECONDS=3600
+      - TTL_UNKNOWN_SECONDS=300
+      - ADMIN_API_KEY=adminkey-threat-intel-2026-secure
+      - ALERT_RISK_THRESHOLD=75
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:

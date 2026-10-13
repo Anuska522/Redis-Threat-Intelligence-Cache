@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Threat Intelligence Cache | Redis NoSQL Defense Engine</title>
+  <meta name="description" content="High-speed threat intelligence cache and malicious URL/IP detection platform powered by Redis NoSQL data structures.">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand-section">
+        <div class="brand-icon">TI</div>
+        <div class="brand-title">
+          <h1>Threat Intelligence Cache</h1>
+          <div class="subtitle">Redis In-Memory Defense Engine // v1.0.0</div>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="status-pill" id="redis-status-pill">
+          <span class="status-dot" id="redis-status-dot"></span>
+          <span id="redis-status-text">Redis: Connecting...</span>
+        </div>
+        <div class="status-pill" id="provider-status-pill">
+          <span class="status-dot active"></span>
+          <span id="provider-status-text">CTI: Local Demo</span>
+        </div>
+        <div class="status-pill" id="ws-status-pill">
+          <span class="status-dot" id="ws-status-dot"></span>
+          <span id="ws-status-text">Pub/Sub: Standby</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation -->
+  <nav class="app-nav">
+    <div class="nav-container">
+      <button class="nav-btn active" data-tab="tab-lookup" id="nav-lookup">Threat Lookup</button>
+      <button class="nav-btn" data-tab="tab-analytics" id="nav-analytics">Operational Analytics</button>
+      <button class="nav-btn" data-tab="tab-blacklist" id="nav-blacklist">Blacklist Management</button>
+      <button class="nav-btn" data-tab="tab-benchmark" id="nav-benchmark">Performance Benchmark</button>
+      <button class="nav-btn" data-tab="tab-settings" id="nav-settings">Settings & TTL</button>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- Top Metrics Overview -->
+    <section class="metrics-grid">
+      <div class="metric-card accent-cyan">
+        <div class="metric-label">Total Lookups</div>
+        <div class="metric-value" id="metric-total-lookups">0</div>
+        <div class="metric-sub">Cumulative queries evaluated</div>
+      </div>
+      <div class="metric-card accent-emerald">
+        <div class="metric-label">Cache Hit Rate</div>
+        <div class="metric-value" id="metric-hit-rate">0.0%</div>
+        <div class="metric-sub"><span id="metric-hits-count">0</span> hits / <span id="metric-misses-count">0</span> misses</div>
+      </div>
+      <div class="metric-card accent-cyan">
+        <div class="metric-label">Requests Avoided</div>
+        <div class="metric-value" id="metric-avoided">0</div>
+        <div class="metric-sub">External provider calls saved</div>
+      </div>
+      <div class="metric-card accent-crimson">
+        <div class="metric-label">Threats Detected</div>
+        <div class="metric-value" id="metric-threats">0</div>
+        <div class="metric-sub">Malicious indicators blocked</div>
+      </div>
+      <div class="metric-card accent-amber">
+        <div class="metric-label">Active Blacklist</div>
+        <div class="metric-value" id="metric-blacklist">0</div>
+        <div class="metric-sub">Redis Set indicators</div>
+      </div>
+      <div class="metric-card accent-emerald">
+        <div class="metric-label">Cache Latency</div>
+        <div class="metric-value" id="metric-hit-latency">0.0 ms</div>
+        <div class="metric-sub">vs <span id="metric-miss-latency">0.0 ms</span> miss</div>
+      </div>
+    </section>
+
+    <!-- Tab 1: Threat Lookup -->
+    <section class="tab-content active" id="tab-lookup">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Indicator Reputation Lookup</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Cache-First Redis Hash Resolution</div>
+        </div>
+        <div class="panel-body">
+          <form class="lookup-form" id="lookup-form">
+            <div class="lookup-input-wrapper">
+              <input type="text" class="lookup-input" id="lookup-input" placeholder="Enter IPv4, IPv6, Domain, or full URL (e.g. 203.0.113.25 or phish-secure-banking-login.com)" required autocomplete="off">
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-submit-lookup">Check Indicator</button>
+            <button type="button" class="btn" id="btn-force-refresh" title="Bypass Redis cache and query threat intelligence source directly">Force Refresh</button>
+          </form>
+
+          <!-- Test Fixtures Chip Bar -->
+          <div class="chip-bar">
+            <span class="chip-title">Quick Test Fixtures:</span>
+            <span class="chip" data-val="203.0.113.25">Malicious IP (Botnet C2)</span>
+            <span class="chip" data-val="198.51.100.44">Malicious IP (Ransomware)</span>
+            <span class="chip" data-val="8.8.8.8">Benign IP (Google DNS)</span>
+            <span class="chip" data-val="2606:4700:4700::1111">Benign IPv6 (Cloudflare)</span>
+            <span class="chip" data-val="phish-secure-banking-login.com">Malicious Domain (Phishing)</span>
+            <span class="chip" data-val="github.com">Benign Domain (GitHub)</span>
+            <span class="chip" data-val="http://phish-secure-banking-login.com/auth/login.php?session=steal">Malicious URL</span>
+            <span class="chip" data-val="https://github.com/torvalds/linux">Benign URL</span>
+          </div>
+
+          <!-- Result Container -->
+          <div id="lookup-result-placeholder" style="text-align: center; padding: 40px; color: var(--text-muted); border: 1px dashed var(--border-color); border-radius: var(--radius-md);">
+            Submit an indicator above or click a quick fixture to inspect threat intelligence.
+          </div>
+
+          <div class="verdict-card" id="lookup-result-card" style="display: none;">
+            <div class="verdict-header">
+              <div>
+                <span class="verdict-badge" id="res-verdict-badge">BENIGN</span>
+                <span class="indicator-title" id="res-indicator-title" style="margin-left: 12px;">indicator.example.com</span>
+              </div>
+              <div style="text-align: right;">
+                <span class="status-pill" id="res-cache-badge" style="font-size: 12px; font-weight: 600;">Cache Hit</span>
+              </div>
+            </div>
+
+            <!-- Threat Score Gauge -->
+            <div class="score-container">
+              <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px;">
+                <span style="color: var(--text-muted); text-transform: uppercase;">Threat Risk Score</span>
+                <span style="font-family: var(--font-mono); font-weight: 700;" id="res-score-text">0 / 100</span>
+              </div>
+              <div class="score-bar-bg">
+                <div class="score-bar-fill" id="res-score-bar" style="width: 0%; background-color: var(--color-emerald);"></div>
+              </div>
+            </div>
+
+            <!-- Metadata Grid -->
+            <div class="verdict-meta-grid">
+              <div class="meta-field">
+                <span class="field-name">Indicator Type</span>
+                <span class="field-val" id="res-type">IPv4</span>
+              </div>
+              <div class="meta-field">
+                <span class="field-name">Source Provider</span>
+                <span class="field-val" id="res-source">redis_cache</span>
+              </div>
+              <div class="meta-field">
+                <span class="field-name">Lookup Latency</span>
+                <span class="field-val" id="res-latency">0.45 ms</span>
+              </div>
+              <div class="meta-field">
+                <span class="field-name">TTL Remaining</span>
+                <span class="field-val" id="res-ttl">3599s (Policy: 3600s)</span>
+              </div>
+              <div class="meta-field">
+                <span class="field-name">Confidence</span>
+                <span class="field-val" id="res-confidence">99%</span>
+              </div>
+              <div class="meta-field">
+                <span class="field-name">Redis Key</span>
+                <span class="field-val mono-cell" id="res-redis-key" style="font-size: 11px;">ti:ip:203.0.113.25</span>
+              </div>
+            </div>
+
+            <div class="meta-field" style="margin-bottom: 12px;">
+              <span class="field-name">Categories</span>
+              <div class="tag-list" id="res-categories">
+                <span class="tag">none</span>
+              </div>
+            </div>
+
+            <div class="meta-field" style="margin-bottom: 12px;">
+              <span class="field-name">Threat Intelligence Description</span>
+              <div style="font-size: 13px; color: var(--text-secondary);" id="res-description">Standard indicator report.</div>
+            </div>
+
+            <!-- Raw JSON Toggle -->
+            <div>
+              <button type="button" class="btn" id="btn-toggle-json" style="padding: 4px 10px; font-size: 11px;">Toggle Raw JSON</button>
+              <pre class="raw-json-box" id="res-raw-json" style="display: none;"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Alerts Drawer -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Real-Time Threat Alerts Feed</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Redis Pub/Sub Stream</div>
+        </div>
+        <div class="panel-body">
+          <div class="alerts-list" id="alerts-feed">
+            <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 16px;">
+              Listening for real-time threat events via WebSocket / Redis Pub/Sub...
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Operational Analytics -->
+    <section class="tab-content" id="tab-analytics">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Top Searched Indicators & Threats</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Redis Sorted Set (rank:threats)</div>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrapper">
+            <table class="data-table" id="top-threats-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Indicator</th>
+                  <th>Lookup Frequency</th>
+                  <th>Quick Action</th>
+                </tr>
+              </thead>
+              <tbody id="top-threats-tbody">
+                <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No lookups recorded yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Recent Lookup Audit Trail</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Redis Capped List (history:lookups)</div>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrapper">
+            <table class="data-table" id="history-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Indicator</th>
+                  <th>Type</th>
+                  <th>Verdict</th>
+                  <th>Source</th>
+                  <th>Cache Status</th>
+                  <th>Latency</th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No lookup history yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Blacklist Management -->
+    <section class="tab-content" id="tab-blacklist">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Administrative Blacklist</div>
+          <button class="btn btn-primary" id="btn-open-add-blacklist" style="padding: 6px 14px; font-size: 12px;">+ Add Blacklist Entry</button>
+        </div>
+        <div class="panel-body">
+          <p style="color: var(--text-secondary); margin-bottom: 16px; font-size: 13px;">
+            Blacklists are maintained in dedicated Redis Sets (<code>blacklist:ip</code>, <code>blacklist:domain</code>, <code>blacklist:url</code>) with atomic O(1) membership validation and immediate threat intercept.
+          </p>
+          <div class="table-wrapper">
+            <table class="data-table" id="blacklist-table">
+              <thead>
+                <tr>
+                  <th>Indicator</th>
+                  <th>Type</th>
+                  <th>Reason</th>
+                  <th>Source</th>
+                  <th>Added At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="blacklist-tbody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No administrative blacklisted indicators.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Performance Benchmark -->
+    <section class="tab-content" id="tab-benchmark">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Performance & Latency Benchmark Suite</div>
+          <button class="btn btn-primary" id="btn-run-benchmark">Execute Benchmark</button>
+        </div>
+        <div class="panel-body">
+          <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+            This benchmark measures cold cache lookups (cache misses querying intelligence sources) against warm cache lookups (Redis in-memory hash retrieval), generating empirical latency percentiles (P50, P95, P99) and hit rate measurements.
+          </p>
+
+          <div id="benchmark-status" style="display: none; padding: 12px; background-color: var(--bg-secondary); border-radius: var(--radius-sm); margin-bottom: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--color-cyan);">
+            Executing benchmark workload across test fixtures...
+          </div>
+
+          <div class="benchmark-grid" id="benchmark-results-container" style="display: none;">
+            <div class="benchmark-card">
+              <h4>Cold Cache Workload</h4>
+              <div class="stat-row"><span>Sample Size</span><span id="bm-cold-samples">0</span></div>
+              <div class="stat-row"><span>Average Latency</span><span id="bm-cold-avg">0.0 ms</span></div>
+              <div class="stat-row"><span>Median Latency (P50)</span><span id="bm-cold-p50">0.0 ms</span></div>
+              <div class="stat-row"><span>P95 Latency</span><span id="bm-cold-p95">0.0 ms</span></div>
+              <div class="stat-row"><span>P99 Latency</span><span id="bm-cold-p99">0.0 ms</span></div>
+              <div class="stat-row"><span>Cache Hit Rate</span><span id="bm-cold-hitrate">0.0%</span></div>
+            </div>
+
+            <div class="benchmark-card">
+              <h4>Warm Cache Workload</h4>
+              <div class="stat-row"><span>Sample Size</span><span id="bm-warm-samples">0</span></div>
+              <div class="stat-row"><span>Average Latency</span><span id="bm-warm-avg">0.0 ms</span></div>
+              <div class="stat-row"><span>Median Latency (P50)</span><span id="bm-warm-p50">0.0 ms</span></div>
+              <div class="stat-row"><span>P95 Latency</span><span id="bm-warm-p95">0.0 ms</span></div>
+              <div class="stat-row"><span>P99 Latency</span><span id="bm-warm-p99">0.0 ms</span></div>
+              <div class="stat-row"><span>Cache Hit Rate</span><span id="bm-warm-hitrate">100.0%</span></div>
+              <div class="stat-row"><span>Throughput</span><span id="bm-warm-throughput">0 req/s</span></div>
+            </div>
+
+            <div class="benchmark-card">
+              <h4>Comparative Acceleration</h4>
+              <div class="stat-row"><span>Speedup Factor</span><span id="bm-comp-speedup" style="color: var(--color-emerald);">0.0x</span></div>
+              <div class="stat-row"><span>Latency Reduction</span><span id="bm-comp-reduction" style="color: var(--color-emerald);">0.0%</span></div>
+              <div class="stat-row"><span>Requests Avoided</span><span id="bm-comp-avoided">0</span></div>
+              <div class="stat-row"><span>Dataset Mode</span><span id="bm-comp-mode">demo</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: Settings -->
+    <section class="tab-content" id="tab-settings">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">Cache Expiration & Threat Policies</div>
+          <div style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Configurable Redis TTL Rules</div>
+        </div>
+        <div class="panel-body">
+          <form id="settings-form" style="max-width: 600px;">
+            <div class="form-group">
+              <label>Administrative API Key (Required for changes)</label>
+              <input type="password" class="form-input" id="cfg-admin-key" placeholder="Enter ADMIN_API_KEY from .env" required>
+            </div>
+            <div class="form-group">
+              <label>Malicious Indicator TTL (Seconds)</label>
+              <input type="number" class="form-input" id="cfg-ttl-malicious" min="30" max="604800" value="7200">
+              <span style="font-size: 11px; color: var(--text-muted);">Controls how long high-risk verified records remain cached in Redis.</span>
+            </div>
+            <div class="form-group">
+              <label>Benign Indicator TTL (Seconds)</label>
+              <input type="number" class="form-input" id="cfg-ttl-benign" min="30" max="604800" value="3600">
+              <span style="font-size: 11px; color: var(--text-muted);">Controls cache duration for safe/trusted entities.</span>
+            </div>
+            <div class="form-group">
+              <label>Unknown / Unindexed Indicator TTL (Seconds)</label>
+              <input type="number" class="form-input" id="cfg-ttl-unknown" min="10" max="86400" value="300">
+              <span style="font-size: 11px; color: var(--text-muted);">Short-lived cache for missing intelligence to trigger frequent refresh.</span>
+            </div>
+            <div class="form-group">
+              <label>Real-Time Alert Score Threshold (1 - 100)</label>
+              <input type="number" class="form-input" id="cfg-alert-threshold" min="1" max="100" value="75">
+              <span style="font-size: 11px; color: var(--text-muted);">Threat score required to publish real-time alert to Redis Pub/Sub.</span>
+            </div>
+            <div class="form-group">
+              <label>Threat Intelligence Provider</label>
+              <select class="form-input" id="cfg-provider">
+                <option value="demo">Local Demonstration Dataset (Offline Fixtures)</option>
+                <option value="virustotal">VirusTotal v3 Live API</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-save-settings">Save Configuration</button>
+            <span id="settings-save-msg" style="margin-left: 12px; font-size: 12px; color: var(--color-emerald); display: none;">Settings updated successfully.</span>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add Blacklist Modal -->
+  <div class="modal-overlay" id="modal-blacklist">
+    <div class="modal-box">
+      <div class="modal-title">Add Indicator to Blacklist</div>
+      <form id="form-add-blacklist">
+        <div class="form-group">
+          <label>Indicator (IP, Domain, or URL)</label>
+          <input type="text" class="form-input" id="bl-input-indicator" required placeholder="e.g. 198.51.100.99 or evil-domain.com">
+        </div>
+        <div class="form-group">
+          <label>Reason / Threat Classification</label>
+          <input type="text" class="form-input" id="bl-input-reason" value="Administrative manual blacklist entry" required>
+        </div>
+        <div class="form-group">
+          <label>Administrative API Key</label>
+          <input type="password" class="form-input" id="bl-input-admin-key" placeholder="Enter ADMIN_API_KEY" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="btn-close-modal">Cancel</button>
+          <button type="submit" class="btn btn-danger">Confirm Blacklist</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div>Real-Time Threat Intelligence Cache and Malicious URL/IP Detection System Using Redis</div>
+    <div style="margin-top: 4px; color: var(--text-muted);">NoSQL Database: Redis // Hashes, Sets, Sorted Sets, Strings, TTL, Pub/Sub</div>
+  </footer>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
